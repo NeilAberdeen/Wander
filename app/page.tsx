@@ -68,7 +68,14 @@ export default function DiscoverPage() {
     pointerStartX.current = e.clientX;
     pointerStartY.current = e.clientY;
     setIsDragging(true);
-    e.currentTarget.setPointerCapture(e.pointerId);
+    // Pointer capture keeps tracking the drag even if the cursor leaves the
+    // card's bounds. It's not universally supported/reliable, so guard it —
+    // a failure here should never block the rest of the interaction.
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore — dragging still works without capture in the normal case
+    }
   }
 
   function handlePointerMove(e: React.PointerEvent) {

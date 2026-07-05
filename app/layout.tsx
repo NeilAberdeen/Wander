@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -19,7 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="bg-bg text-white font-sans antialiased">
         <div className="mx-auto flex h-[100dvh] max-w-[480px] flex-col overflow-hidden bg-bg">
-          {children}
+          <ErrorBoundary>{children}</ErrorBoundary>
         </div>
       </body>
     </html>
