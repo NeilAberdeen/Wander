@@ -16,18 +16,24 @@ export default function DiscoverPage() {
   const nextCard = useTravelStore((s) => s.nextCard);
   const [infoCardId, setInfoCardId] = useState<string | null>(null);
 
-  const touchStartY = useRef<number | null>(null);
+  const pointerStartY = useRef<number | null>(null);
+  const pointerStartX = useRef<number | null>(null);
   const card = cards[cardIndex];
-  const finished = cardIndex >= cards.length - 1 && swipeCount > 0 && !card;
 
-  function handleTouchStart(e: React.TouchEvent) {
-    touchStartY.current = e.touches[0].clientY;
+  // Pointer events (not touch events) so the swipe-up gesture works with
+  // touch on phones AND mouse/trackpad drags in a desktop browser.
+  function handlePointerDown(e: React.PointerEvent) {
+    pointerStartY.current = e.clientY;
+    pointerStartX.current = e.clientX;
   }
-  function handleTouchEnd(e: React.TouchEvent) {
-    if (touchStartY.current == null) return;
-    const delta = touchStartY.current - e.changedTouches[0].clientY;
-    if (delta > 60) nextCard();
-    touchStartY.current = null;
+  function handlePointerUp(e: React.PointerEvent) {
+    if (pointerStartY.current == null || pointerStartX.current == null) return;
+    const deltaY = pointerStartY.current - e.clientY;
+    const deltaX = Math.abs(pointerStartX.current - e.clientX);
+    // require a mostly-vertical drag so it doesn't fire on button taps/clicks
+    if (deltaY > 60 && deltaX < 60) nextCard();
+    pointerStartY.current = null;
+    pointerStartX.current = null;
   }
 
   function respond(type: "card_liked" | "card_disliked" | "card_saved") {
@@ -43,9 +49,9 @@ export default function DiscoverPage() {
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div
-        className="relative min-h-0 flex-1 overflow-hidden"
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
+        className="relative min-h-0 flex-1 overflow-hidden touch-none select-none"
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
       >
         {card ? (
           <FullScreenInspirationCard

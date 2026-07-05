@@ -89,7 +89,7 @@ export const useTravelStore = create<TravelState>((set, get) => ({
     }
   },
 
-  nextCard: () => set((state) => ({ cardIndex: Math.min(state.cardIndex + 1, INSPIRATION_CARDS.length - 1) })),
+  nextCard: () => set((state) => ({ cardIndex: Math.min(state.cardIndex + 1, INSPIRATION_CARDS.length) })),
 
   sendChatMessage: (text) => {
     const { profile } = get();
