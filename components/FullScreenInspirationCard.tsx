@@ -61,7 +61,13 @@ export default function FullScreenInspirationCard(props: FullScreenInspirationCa
   return (
     <div className="relative h-full w-full shrink-0 snap-start overflow-hidden">
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={imageUrl} alt={destination} className="absolute inset-0 h-full w-full object-cover" />
+      <img
+        src={imageUrl}
+        alt={destination}
+        draggable={false}
+        onDragStart={(e) => e.preventDefault()}
+        className="absolute inset-0 h-full w-full select-none object-cover [-webkit-user-drag:none]"
+      />
       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-black/50" />
 
       {/* top bar */}

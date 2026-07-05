@@ -7,8 +7,11 @@ import FullScreenInspirationCard from "@/components/FullScreenInspirationCard";
 import InfoSheet from "@/components/InfoSheet";
 import { getInspirationCards, useTravelStore } from "@/lib/store";
 
-const DISMISS_THRESHOLD = 70; // px of upward drag before it counts as a swipe
+const H_DISMISS_THRESHOLD = 90; // px of horizontal drag = Yes/No
+const V_DISMISS_THRESHOLD = 70; // px of upward drag = skip
 const EXIT_DURATION = 240; // ms
+
+type ExitDirection = "up" | "left" | "right";
 
 export default function DiscoverPage() {
   const router = useRouter();
@@ -21,80 +24,101 @@ export default function DiscoverPage() {
   const card = cards[cardIndex];
   const upNextCard = cards[cardIndex + 1];
 
-  // Live drag offset (px) applied to the current card while it's being dragged,
-  // plus whether it's mid fly-off animation. Together these make the card
-  // follow the pointer 1:1, then either fly away or snap back on release —
-  // the "flicking a choice away" feel — instead of an instant, abrupt swap.
+  // Live drag offset applied to the current card while it's being dragged,
+  // so it follows the pointer 1:1, then either flies off (left/right = a
+  // choice, up = skip) or snaps back — instead of an instant, abrupt swap.
+  const [dragX, setDragX] = useState(0);
   const [dragY, setDragY] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
   const [suppressTransition, setSuppressTransition] = useState(false);
-  const pointerStartY = useRef<number | null>(null);
   const pointerStartX = useRef<number | null>(null);
+  const pointerStartY = useRef<number | null>(null);
 
-  function triggerExit() {
+  function triggerExit(direction: ExitDirection) {
     setIsDragging(false);
     setIsExiting(true);
-    const distance =
-      typeof window !== "undefined" ? window.innerHeight + 200 : 1200;
-    setDragY(-distance);
+    const w = typeof window !== "undefined" ? window.innerWidth + 200 : 800;
+    const h = typeof window !== "undefined" ? window.innerHeight + 200 : 1200;
+    if (direction === "left") setDragX(-w);
+    else if (direction === "right") setDragX(w);
+    else setDragY(-h);
+
     setTimeout(() => {
       nextCard();
       setSuppressTransition(true);
+      setDragX(0);
       setDragY(0);
       setIsExiting(false);
       requestAnimationFrame(() => requestAnimationFrame(() => setSuppressTransition(false)));
     }, EXIT_DURATION);
   }
 
+  function commit(direction: ExitDirection) {
+    if (!card || isExiting) return;
+    if (direction === "left") reactToCard(card.card_id, "card_disliked");
+    if (direction === "right") reactToCard(card.card_id, "card_liked");
+    triggerExit(direction);
+  }
+
   // Pointer events (not touch events) so this works with touch on phones
   // AND mouse/trackpad drags in a desktop browser.
   function handlePointerDown(e: React.PointerEvent) {
     if (isExiting || !card) return;
-    pointerStartY.current = e.clientY;
     pointerStartX.current = e.clientX;
+    pointerStartY.current = e.clientY;
     setIsDragging(true);
     e.currentTarget.setPointerCapture(e.pointerId);
   }
 
   function handlePointerMove(e: React.PointerEvent) {
-    if (pointerStartY.current == null || isExiting) return;
-    const delta = pointerStartY.current - e.clientY; // positive = dragged up
-    setDragY(delta >= 0 ? -delta : -delta * 0.25); // resistance when dragging down
+    if (pointerStartX.current == null || pointerStartY.current == null || isExiting) return;
+    const dx = e.clientX - pointerStartX.current;
+    const dyUp = pointerStartY.current - e.clientY; // positive = dragged up
+    setDragX(dx);
+    setDragY(dyUp >= 0 ? -dyUp : -dyUp * 0.25); // resistance when dragging down
   }
 
-  function endDrag(committed: boolean) {
-    pointerStartY.current = null;
+  function endDrag() {
+    if (pointerStartX.current == null || pointerStartY.current == null) return;
+    const dx = dragX;
+    const dyUp = -dragY >= 0 ? -dragY : 0;
     pointerStartX.current = null;
-    if (committed) {
-      triggerExit();
+    pointerStartY.current = null;
+
+    if (Math.abs(dx) > H_DISMISS_THRESHOLD && Math.abs(dx) > dyUp) {
+      commit(dx > 0 ? "right" : "left");
+    } else if (dyUp > V_DISMISS_THRESHOLD) {
+      triggerExit("up");
     } else {
       setIsDragging(false);
+      setDragX(0);
       setDragY(0);
     }
   }
 
-  function handlePointerUp(e: React.PointerEvent) {
-    if (pointerStartY.current == null) return;
-    const deltaY = pointerStartY.current - e.clientY;
-    const deltaX = Math.abs((pointerStartX.current ?? e.clientX) - e.clientX);
-    endDrag(deltaY > DISMISS_THRESHOLD && deltaX < 80);
+  function handlePointerUp() {
+    endDrag();
   }
 
   function handlePointerCancel() {
-    if (pointerStartY.current == null) return;
-    endDrag(false);
+    if (pointerStartX.current == null) return;
+    pointerStartX.current = null;
+    pointerStartY.current = null;
+    setIsDragging(false);
+    setDragX(0);
+    setDragY(0);
   }
 
-  function respond(type: "card_liked" | "card_disliked" | "card_saved") {
-    if (!card || isExiting) return;
-    reactToCard(card.card_id, type);
-    if (type !== "card_saved") {
-      triggerExit();
-    }
+  function handleSave() {
+    if (!card) return;
+    reactToCard(card.card_id, "card_saved");
   }
 
   const infoCard = cards.find((c) => c.card_id === infoCardId) ?? null;
+  const rotation = Math.max(-15, Math.min(15, dragX / 12));
+  const likeOpacity = Math.min(Math.max(dragX / H_DISMISS_THRESHOLD, 0), 1);
+  const nopeOpacity = Math.min(Math.max(-dragX / H_DISMISS_THRESHOLD, 0), 1);
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
@@ -127,7 +151,7 @@ export default function DiscoverPage() {
           <div
             className="absolute inset-0 touch-none select-none"
             style={{
-              transform: `translateY(${dragY}px)`,
+              transform: `translate(${dragX}px, ${dragY}px) rotate(${rotation}deg)`,
               transition:
                 isDragging || suppressTransition
                   ? "none"
@@ -149,12 +173,26 @@ export default function DiscoverPage() {
               priceFrom={card.lowest_price_pp}
               currency={card.currency}
               inventoryStatus={card.inventory_status}
-              onYes={() => respond("card_liked")}
-              onNo={() => respond("card_disliked")}
-              onSave={() => respond("card_saved")}
+              onYes={() => commit("right")}
+              onNo={() => commit("left")}
+              onSave={handleSave}
               onInfo={() => setInfoCardId(card.card_id)}
               onRefine={() => router.push("/refine")}
             />
+
+            {/* drag feedback stamps */}
+            <div
+              className="pointer-events-none absolute left-6 top-24 -rotate-12 rounded-lg border-4 border-positive px-3 py-1 text-2xl font-extrabold text-positive"
+              style={{ opacity: likeOpacity }}
+            >
+              YES
+            </div>
+            <div
+              className="pointer-events-none absolute right-6 top-24 rotate-12 rounded-lg border-4 border-white/70 px-3 py-1 text-2xl font-extrabold text-white/70"
+              style={{ opacity: nopeOpacity }}
+            >
+              NO
+            </div>
           </div>
         )}
 
