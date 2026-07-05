@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import BottomNav from "@/components/BottomNav";
 import FullScreenInspirationCard from "@/components/FullScreenInspirationCard";
@@ -10,6 +10,7 @@ import { getInspirationCards, useTravelStore } from "@/lib/store";
 const H_DISMISS_THRESHOLD = 90; // px of horizontal drag = Yes/No
 const V_DISMISS_THRESHOLD = 70; // px of upward drag = skip
 const EXIT_DURATION = 240; // ms
+const STUCK_WATCHDOG_MS = EXIT_DURATION + 1500; // failsafe if anything ever hangs
 
 type ExitDirection = "up" | "left" | "right";
 
@@ -34,6 +35,28 @@ export default function DiscoverPage() {
   const [suppressTransition, setSuppressTransition] = useState(false);
   const pointerStartX = useRef<number | null>(null);
   const pointerStartY = useRef<number | null>(null);
+  const watchdogTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function clearWatchdog() {
+    if (watchdogTimer.current) {
+      clearTimeout(watchdogTimer.current);
+      watchdogTimer.current = null;
+    }
+  }
+
+  function hardReset() {
+    // Failsafe: whatever state got us stuck, unstick everything.
+    clearWatchdog();
+    pointerStartX.current = null;
+    pointerStartY.current = null;
+    detachWindowListeners();
+    setIsDragging(false);
+    setIsExiting(false);
+    setSuppressTransition(true);
+    setDragX(0);
+    setDragY(0);
+    requestAnimationFrame(() => requestAnimationFrame(() => setSuppressTransition(false)));
+  }
 
   function triggerExit(direction: ExitDirection) {
     setIsDragging(false);
@@ -44,12 +67,16 @@ export default function DiscoverPage() {
     else if (direction === "right") setDragX(w);
     else setDragY(-h);
 
+    clearWatchdog();
+    watchdogTimer.current = setTimeout(hardReset, STUCK_WATCHDOG_MS);
+
     setTimeout(() => {
       nextCard();
       setSuppressTransition(true);
       setDragX(0);
       setDragY(0);
       setIsExiting(false);
+      clearWatchdog();
       requestAnimationFrame(() => requestAnimationFrame(() => setSuppressTransition(false)));
     }, EXIT_DURATION);
   }
@@ -61,32 +88,54 @@ export default function DiscoverPage() {
     triggerExit(direction);
   }
 
-  // Pointer events (not touch events) so this works with touch on phones
-  // AND mouse/trackpad drags in a desktop browser.
+  // --- Drag tracking via window-level listeners -----------------------
+  // Attaching move/up listeners to the element itself (even with pointer
+  // capture) can leave a drag "orphaned" if capture isn't honoured by the
+  // browser. Listening on window instead guarantees we always hear the
+  // release, no matter where the cursor ends up. The logic refs + stable
+  // trampoline functions below mean the window listener always runs the
+  // latest closure (fresh state) while keeping add/removeEventListener
+  // working correctly (same function identity every time).
+  const onMoveLogic = useRef<(e: PointerEvent) => void>(() => {});
+  const onUpLogic = useRef<(e: PointerEvent) => void>(() => {});
+  const onCancelLogic = useRef<() => void>(() => {});
+  const stableMove = useRef((e: PointerEvent) => onMoveLogic.current(e)).current;
+  const stableUp = useRef((e: PointerEvent) => onUpLogic.current(e)).current;
+  const stableCancel = useRef(() => onCancelLogic.current()).current;
+
+  function attachWindowListeners() {
+    detachWindowListeners();
+    window.addEventListener("pointermove", stableMove);
+    window.addEventListener("pointerup", stableUp);
+    window.addEventListener("pointercancel", stableCancel);
+  }
+
+  function detachWindowListeners() {
+    window.removeEventListener("pointermove", stableMove);
+    window.removeEventListener("pointerup", stableUp);
+    window.removeEventListener("pointercancel", stableCancel);
+  }
+
+  useEffect(() => detachWindowListeners, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   function handlePointerDown(e: React.PointerEvent) {
     if (isExiting || !card) return;
     pointerStartX.current = e.clientX;
     pointerStartY.current = e.clientY;
     setIsDragging(true);
-    // Pointer capture keeps tracking the drag even if the cursor leaves the
-    // card's bounds. It's not universally supported/reliable, so guard it —
-    // a failure here should never block the rest of the interaction.
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
-      // ignore — dragging still works without capture in the normal case
-    }
+    attachWindowListeners();
   }
 
-  function handlePointerMove(e: React.PointerEvent) {
+  onMoveLogic.current = (e: PointerEvent) => {
     if (pointerStartX.current == null || pointerStartY.current == null || isExiting) return;
     const dx = e.clientX - pointerStartX.current;
     const dyUp = pointerStartY.current - e.clientY; // positive = dragged up
     setDragX(dx);
     setDragY(dyUp >= 0 ? -dyUp : -dyUp * 0.25); // resistance when dragging down
-  }
+  };
 
-  function endDrag() {
+  onUpLogic.current = () => {
+    detachWindowListeners();
     if (pointerStartX.current == null || pointerStartY.current == null) return;
     const dx = dragX;
     const dyUp = -dragY >= 0 ? -dragY : 0;
@@ -102,20 +151,16 @@ export default function DiscoverPage() {
       setDragX(0);
       setDragY(0);
     }
-  }
+  };
 
-  function handlePointerUp() {
-    endDrag();
-  }
-
-  function handlePointerCancel() {
-    if (pointerStartX.current == null) return;
+  onCancelLogic.current = () => {
+    detachWindowListeners();
     pointerStartX.current = null;
     pointerStartY.current = null;
     setIsDragging(false);
     setDragX(0);
     setDragY(0);
-  }
+  };
 
   function handleSave() {
     if (!card) return;
@@ -165,9 +210,6 @@ export default function DiscoverPage() {
                   : `transform ${EXIT_DURATION}ms ease-out`,
             }}
             onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerCancel}
           >
             <FullScreenInspirationCard
               key={card.card_id}
